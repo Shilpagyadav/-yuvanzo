@@ -47,8 +47,12 @@ const auth = (req, res, next) => {
 };
 
 // =============================================
-// HEALTH CHECK
+// ROOT & HEALTH CHECK
 // =============================================
+app.get('/', (req, res) => {
+  res.send('Welcome to Yuvanzo API. Visit /health for status.');
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Yuvanzo API running' });
 });
