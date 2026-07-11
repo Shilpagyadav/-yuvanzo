@@ -16,7 +16,6 @@ let pool;
 
 async function connectDB() {
   try {
-    // Check if we're using SSL (Aiven) or local
     const sslConfig = process.env.DB_HOST && process.env.DB_HOST.includes('aivencloud.com') 
       ? { ssl: { rejectUnauthorized: false } } 
       : {};
