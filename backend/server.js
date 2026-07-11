@@ -16,17 +16,26 @@ let pool;
 
 async function connectDB() {
   try {
+    // Check if we're using SSL (Aiven) or local
+    const sslConfig = process.env.DB_HOST && process.env.DB_HOST.includes('aivencloud.com') 
+      ? { ssl: { rejectUnauthorized: false } } 
+      : {};
+
     pool = mysql.createPool({
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD || '',
       database: process.env.DB_NAME || 'multi_vendor_food_delivery',
+      port: process.env.DB_PORT || 3306,
       waitForConnections: true,
       connectionLimit: 10,
-      queueLimit: 0
+      queueLimit: 0,
+      ...sslConfig
     });
-    await pool.getConnection();
-    console.log('✅ Database connected');
+    
+    const connection = await pool.getConnection();
+    console.log('✅ Database connected successfully');
+    connection.release();
   } catch (error) {
     console.error('❌ DB Error:', error.message);
   }
