@@ -1,516 +1,424 @@
-const { initSocket } = require('./socket');
-const express = require('express');
-const cors = require('cors');
-const mysql = require('mysql2/promise');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-// const paymentRoutes = require('./routes/payment');  // Commented out
-require('dotenv').config();
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Container,
+  Grid,
+  Card,
+  CardContent,
+  CardActions,
+  Typography,
+  Button,
+  Box,
+  Chip,
+  CircularProgress,
+  Paper,
+  TextField,
+  InputAdornment,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
+  useMediaQuery,
+  useTheme
+} from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
+import RestaurantIcon from '@mui/icons-material/Restaurant';
+import { getRestaurants, toggleFavorite, getFavorites } from '../services/api';
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+function HomePage() {
+  const [restaurants, setRestaurants] = useState([]);
+  const [filteredRestaurants, setFilteredRestaurants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCuisine, setSelectedCuisine] = useState('All');
+  const [selectedRating, setSelectedRating] = useState(0);
+  const [sortBy, setSortBy] = useState('rating');
+  const [favorites, setFavorites] = useState({});
+  const [user, setUser] = useState(null);
 
-app.use(cors());
-app.use(express.json());
-// app.use('/api/payment', paymentRoutes);  // Commented out
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-// Database connection
-let pool;
-
-async function connectDB() {
-  try {
-    const sslConfig = process.env.DB_HOST && process.env.DB_HOST.includes('aivencloud.com') 
-      ? { ssl: { rejectUnauthorized: false } } 
-      : {};
-
-    pool = mysql.createPool({
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'multi_vendor_food_delivery',
-      port: process.env.DB_PORT || 3306,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      ...sslConfig
-    });
-    
-    const connection = await pool.getConnection();
-    console.log('✅ Database connected successfully');
-    connection.release();
-  } catch (error) {
-    console.error('❌ DB Error:', error.message);
-  }
-}
-connectDB();
-
-// Auth Middleware
-const auth = (req, res, next) => {
-  try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    if (!token) throw new Error();
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-    req.user = decoded;
-    next();
-  } catch {
-    res.status(401).json({ success: false, message: 'Please login' });
-  }
-};
-
-// =============================================
-// ROOT & HEALTH CHECK
-// =============================================
-app.get('/', (req, res) => {
-  res.send('Welcome to Yuvanzo API. Visit /health for status.');
-});
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Yuvanzo API running' });
-});
-
-app.get('/api', (req, res) => {
-  res.json({ 
-    message: 'Welcome to Yuvanzo',
-    endpoints: {
-      auth: '/api/auth',
-      restaurants: '/api/restaurants',
-      cart: '/api/cart',
-      orders: '/api/orders'
+  useEffect(() => {
+    // Check if user is logged in
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      setUser(JSON.parse(userData));
     }
-  });
-});
-
-// =============================================
-// RESTAURANTS
-// =============================================
-app.get('/api/restaurants', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT *, opening_time, closing_time, delivery_time FROM restaurants WHERE is_active = true ORDER BY rating DESC'
-    );
-    res.json({ success: true, data: rows });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.get('/api/restaurants/:id', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT *, opening_time, closing_time, delivery_time FROM restaurants WHERE id = ? AND is_active = true',
-      [req.params.id]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Restaurant not found' });
+    fetchRestaurants();
+    if (userData) {
+      fetchFavorites();
     }
-    res.json({ success: true, data: rows[0] });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  }, []);
 
-app.get('/api/restaurants/:id/menu', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT mi.*, r.name as restaurant_name FROM menu_items mi JOIN restaurants r ON mi.restaurant_id = r.id WHERE mi.restaurant_id = ? AND mi.is_available = true',
-      [req.params.id]
-    );
-    res.json({ success: true, data: rows });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// =============================================
-// AUTH
-// =============================================
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { email, password, full_name, phone, address } = req.body;
-    const [existing] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
-    if (existing.length > 0) {
-      return res.status(400).json({ success: false, message: 'Email already exists' });
+  const fetchRestaurants = async () => {
+    try {
+      const response = await getRestaurants();
+      setRestaurants(response.data.data);
+      setFilteredRestaurants(response.data.data);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error:', error);
+      setLoading(false);
     }
-    const hashed = await bcrypt.hash(password, 10);
-    const [result] = await pool.query(
-      'INSERT INTO users (email, password_hash, full_name, phone, address) VALUES (?, ?, ?, ?, ?)',
-      [email, hashed, full_name, phone, address]
-    );
-    const token = jwt.sign({ id: result.insertId, email, role: 'customer' }, process.env.JWT_SECRET || 'secret');
-    res.status(201).json({
-      success: true,
-      message: 'Registration successful!',
-      data: { user: { id: result.insertId, email, full_name, phone, address }, token }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  };
 
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
-    if (users.length === 0) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  const fetchFavorites = async () => {
+    try {
+      const response = await getFavorites();
+      const favMap = {};
+      response.data.data.forEach(r => {
+        favMap[r.id] = true;
+      });
+      setFavorites(favMap);
+    } catch (error) {
+      console.error('Error fetching favorites:', error);
     }
-    const user = users[0];
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET || 'secret');
-    const { password_hash, ...userData } = user;
-    res.json({ success: true, message: 'Login successful!', data: { user: userData, token } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  };
 
-app.get('/api/auth/me', auth, async (req, res) => {
-  try {
-    const [users] = await pool.query('SELECT id, email, full_name, phone, address, role FROM users WHERE id = ?', [req.user.id]);
-    res.json({ success: true, data: users[0] });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  // Get unique cuisines
+  const cuisines = ['All', ...new Set(restaurants.map(r => r.cuisine_type).filter(Boolean))];
 
-// =============================================
-// CART
-// =============================================
-app.post('/api/cart/add', auth, async (req, res) => {
-  try {
-    const { restaurantId, menuItemId, quantity } = req.body;
-    const [existing] = await pool.query(
-      'SELECT * FROM cart WHERE user_id = ? AND menu_item_id = ?',
-      [req.user.id, menuItemId]
-    );
-    if (existing.length > 0) {
-      await pool.query('UPDATE cart SET quantity = quantity + ? WHERE id = ?', [quantity || 1, existing[0].id]);
-    } else {
-      await pool.query(
-        'INSERT INTO cart (user_id, restaurant_id, menu_item_id, quantity) VALUES (?, ?, ?, ?)',
-        [req.user.id, restaurantId, menuItemId, quantity || 1]
+  // Apply filters and search
+  useEffect(() => {
+    let results = restaurants;
+
+    if (searchTerm) {
+      results = results.filter(r =>
+        r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.cuisine_type?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
-    res.json({ success: true, message: 'Added to cart!' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
 
-app.get('/api/cart', auth, async (req, res) => {
-  try {
-    const [items] = await pool.query(
-      `SELECT c.*, mi.name, mi.price, r.name as restaurant_name, r.delivery_fee
-       FROM cart c
-       JOIN menu_items mi ON c.menu_item_id = mi.id
-       JOIN restaurants r ON c.restaurant_id = r.id
-       WHERE c.user_id = ?`,
-      [req.user.id]
-    );
-    const grouped = items.reduce((acc, item) => {
-      if (!acc[item.restaurant_id]) {
-        acc[item.restaurant_id] = { restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name, items: [], subtotal: 0 };
-      }
-      acc[item.restaurant_id].items.push(item);
-      acc[item.restaurant_id].subtotal += item.price * item.quantity;
-      return acc;
-    }, {});
-    const total = Object.values(grouped).reduce((sum, g) => sum + g.subtotal, 0);
-    res.json({
-      success: true,
-      data: {
-        items: Object.values(grouped),
-        total_amount: total,
-        item_count: items.reduce((s, i) => s + i.quantity, 0)
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.delete('/api/cart/:id', auth, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM cart WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
-    res.json({ success: true, message: 'Removed from cart' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.delete('/api/cart', auth, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM cart WHERE user_id = ?', [req.user.id]);
-    res.json({ success: true, message: 'Cart cleared' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// =============================================
-// ORDERS (Multi-Vendor)
-// =============================================
-app.post('/api/orders/create', auth, async (req, res) => {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const { deliveryAddress, paymentMethod = 'cash' } = req.body;
-
-    const [cartItems] = await conn.query(
-      `SELECT c.*, mi.price, mi.name, r.name as restaurant_name, r.delivery_fee
-       FROM cart c
-       JOIN menu_items mi ON c.menu_item_id = mi.id
-       JOIN restaurants r ON c.restaurant_id = r.id
-       WHERE c.user_id = ?`,
-      [req.user.id]
-    );
-
-    if (cartItems.length === 0) {
-      await conn.rollback();
-      return res.status(400).json({ success: false, message: 'Cart is empty' });
+    if (selectedCuisine !== 'All') {
+      results = results.filter(r => r.cuisine_type === selectedCuisine);
     }
 
-    const vendorGroups = cartItems.reduce((acc, item) => {
-      if (!acc[item.restaurant_id]) {
-        acc[item.restaurant_id] = { restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name, items: [], subtotal: 0 };
-      }
-      acc[item.restaurant_id].items.push(item);
-      acc[item.restaurant_id].subtotal += item.price * item.quantity;
-      return acc;
-    }, {});
-
-    let subtotal = 0;
-    for (const v in vendorGroups) subtotal += vendorGroups[v].subtotal;
-    const tax = subtotal * 0.08;
-    const total = subtotal + tax;
-
-    const orderNumber = 'YV-' + Date.now().toString(36).toUpperCase();
-
-    const [orderResult] = await conn.query(
-      `INSERT INTO orders (order_number, user_id, total_amount, subtotal_amount, tax_amount, final_amount, delivery_address, payment_method)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [orderNumber, req.user.id, total, subtotal, tax, total, deliveryAddress, paymentMethod]
-    );
-
-    const orderId = orderResult.insertId;
-
-    for (const v in vendorGroups) {
-      for (const item of vendorGroups[v].items) {
-        await conn.query(
-          `INSERT INTO order_items (order_id, restaurant_id, menu_item_id, menu_item_name, quantity, price_per_item, subtotal, total_amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [orderId, item.restaurant_id, item.menu_item_id, item.name, item.quantity, item.price, item.price * item.quantity, item.price * item.quantity * 1.08]
-        );
-      }
+    if (selectedRating > 0) {
+      results = results.filter(r => r.rating >= selectedRating);
     }
 
-    await conn.query('DELETE FROM cart WHERE user_id = ?', [req.user.id]);
-    await conn.commit();
+    if (sortBy === 'rating') {
+      results = [...results].sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    } else if (sortBy === 'name') {
+      results = [...results].sort((a, b) => a.name.localeCompare(b.name));
+    }
 
-    res.status(201).json({
-      success: true,
-      message: 'Order placed successfully!',
-      data: { order_id: orderId, order_number: orderNumber, total_amount: total }
-    });
-  } catch (error) {
-    await conn.rollback();
-    res.status(500).json({ success: false, message: error.message });
-  } finally {
-    conn.release();
-  }
-});
+    setFilteredRestaurants(results);
+  }, [searchTerm, selectedCuisine, selectedRating, sortBy, restaurants]);
 
-app.get('/api/orders', auth, async (req, res) => {
-  try {
-    const [orders] = await pool.query(
-      `SELECT o.*, COUNT(DISTINCT oi.restaurant_id) as vendor_count
-       FROM orders o
-       JOIN order_items oi ON o.id = oi.order_id
-       WHERE o.user_id = ?
-       GROUP BY o.id
-       ORDER BY o.created_at DESC`,
-      [req.user.id]
-    );
-    res.json({ success: true, data: orders });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// =============================================
-// VENDOR ROUTES
-// =============================================
-
-app.get('/api/vendor/orders', auth, async (req, res) => {
-  try {
-    const [restaurant] = await pool.query(
-      'SELECT id FROM restaurants WHERE vendor_id = ?',
-      [req.user.id]
-    );
+  // Check if restaurant is open
+  const isRestaurantOpen = (openingTime, closingTime) => {
+    if (!openingTime || !closingTime) return true;
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const currentTime = hours * 60 + minutes;
     
-    if (restaurant.length === 0) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'You are not a vendor' 
-      });
-    }
-
-    const [orders] = await pool.query(
-      `SELECT o.*, oi.*, u.full_name as customer_name,
-              oi.status as item_status
-       FROM orders o 
-       JOIN order_items oi ON o.id = oi.order_id 
-       JOIN users u ON o.user_id = u.id
-       WHERE oi.restaurant_id = ? 
-       ORDER BY o.created_at DESC`,
-      [restaurant[0].id]
-    );
+    const [openH, openM] = openingTime.split(':').map(Number);
+    const [closeH, closeM] = closingTime.split(':').map(Number);
+    const openTime = openH * 60 + openM;
+    const closeTime = closeH * 60 + closeM;
     
-    res.json({ success: true, data: orders });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+    return currentTime >= openTime && currentTime <= closeTime;
+  };
 
-app.put('/api/vendor/order/:id/status', auth, async (req, res) => {
-  try {
-    const { status } = req.body;
-    const orderItemId = req.params.id;
-
-    const [check] = await pool.query(
-      `SELECT oi.* FROM order_items oi 
-       JOIN restaurants r ON oi.restaurant_id = r.id 
-       WHERE oi.id = ? AND r.vendor_id = ?`,
-      [orderItemId, req.user.id]
-    );
-
-    if (check.length === 0) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
-    }
-
-    await pool.query(
-      'UPDATE order_items SET status = ? WHERE id = ?',
-      [status, orderItemId]
-    );
-
-    res.json({ 
-      success: true, 
-      message: 'Order status updated successfully' 
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.get('/api/vendor/earnings', auth, async (req, res) => {
-  try {
-    const [restaurant] = await pool.query(
-      'SELECT id FROM restaurants WHERE vendor_id = ?',
-      [req.user.id]
-    );
-
-    if (restaurant.length === 0) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'You are not a vendor' 
-      });
-    }
-
-    const [earnings] = await pool.query(
-      `SELECT 
-        COUNT(*) as total_orders,
-        SUM(oi.total_amount) as total_revenue,
-        AVG(oi.total_amount) as average_order_value
-       FROM order_items oi
-       WHERE oi.restaurant_id = ?`,
-      [restaurant[0].id]
-    );
-
-    res.json({ 
-      success: true, 
-      data: {
-        total_orders: earnings[0].total_orders || 0,
-        total_revenue: earnings[0].total_revenue || 0,
-        average_order_value: earnings[0].average_order_value || 0
+  const handleToggleFavorite = async (restaurantId) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Please login to save favorites');
+        return;
       }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.get('/api/vendor/menu', auth, async (req, res) => {
-  try {
-    const [restaurant] = await pool.query(
-      'SELECT id FROM restaurants WHERE vendor_id = ?',
-      [req.user.id]
-    );
-
-    if (restaurant.length === 0) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'You are not a vendor' 
-      });
+      const response = await toggleFavorite(restaurantId);
+      if (response.data.success) {
+        setFavorites(prev => ({
+          ...prev,
+          [restaurantId]: response.data.isFavorite
+        }));
+      }
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
     }
+  };
 
-    const [menu] = await pool.query(
-      'SELECT * FROM menu_items WHERE restaurant_id = ?',
-      [restaurant[0].id]
+  const renderStars = (rating) => {
+    return '⭐'.repeat(Math.floor(rating || 0)) || '⭐';
+  };
+
+  // Loading skeletons
+  if (loading) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Grid container spacing={3}>
+          {[1, 2, 3, 4, 5, 6].map(i => (
+            <Grid item xs={12} sm={6} md={4} key={i}>
+              <Card sx={{ height: '100%' }}>
+                <Box sx={{ height: 140, bgcolor: '#e0e0e0' }} />
+                <CardContent>
+                  <Box sx={{ height: 30, bgcolor: '#e0e0e0', borderRadius: 1, mb: 1 }} />
+                  <Box sx={{ height: 20, bgcolor: '#e0e0e0', borderRadius: 1, mb: 1, width: '60%' }} />
+                  <Box sx={{ height: 20, bgcolor: '#e0e0e0', borderRadius: 1, width: '40%' }} />
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      </Container>
     );
-
-    res.json({ success: true, data: menu });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
-});
 
-app.post('/api/vendor/menu', auth, async (req, res) => {
-  try {
-    const { name, description, price, category } = req.body;
-    
-    const [restaurant] = await pool.query(
-      'SELECT id FROM restaurants WHERE vendor_id = ?',
-      [req.user.id]
-    );
+  return (
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      {/* Hero Banner */}
+      <Paper
+        sx={{
+          p: isMobile ? 3 : 4,
+          mb: 4,
+          background: 'linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%)',
+          color: 'white',
+          textAlign: 'center',
+          borderRadius: 3
+        }}
+      >
+        <Typography variant={isMobile ? "h4" : "h3"} gutterBottom>
+          🍽️ Yuvanzo
+        </Typography>
+        <Typography variant={isMobile ? "body1" : "h6"} gutterBottom>
+          Your Food, Your Way - Order from multiple restaurants in one go!
+        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, flexWrap: 'wrap', mt: 2 }}>
+          <Chip label="Multi-Vendor Orders" sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }} />
+          <Chip label="Fast Delivery" sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }} />
+          <Chip label="Top Restaurants" sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }} />
+        </Box>
+      </Paper>
 
-    if (restaurant.length === 0) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'You are not a vendor' 
-      });
-    }
+      {/* Search & Filters */}
+      <Paper sx={{ p: isMobile ? 2 : 3, mb: 4, borderRadius: 3 }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12} md={4}>
+            <TextField
+              fullWidth
+              placeholder="Search restaurants or cuisines..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ color: '#6C5CE7' }} />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: 2,
+                }
+              }}
+              size={isMobile ? "small" : "medium"}
+            />
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <FormControl fullWidth size={isMobile ? "small" : "medium"}>
+              <InputLabel>Cuisine</InputLabel>
+              <Select
+                value={selectedCuisine}
+                onChange={(e) => setSelectedCuisine(e.target.value)}
+                label="Cuisine"
+              >
+                {cuisines.map(c => (
+                  <MenuItem key={c} value={c}>{c}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <FormControl fullWidth size={isMobile ? "small" : "medium"}>
+              <InputLabel>Rating</InputLabel>
+              <Select
+                value={selectedRating}
+                onChange={(e) => setSelectedRating(e.target.value)}
+                label="Rating"
+              >
+                <MenuItem value={0}>All Ratings</MenuItem>
+                <MenuItem value={4}>4+ Stars</MenuItem>
+                <MenuItem value={3}>3+ Stars</MenuItem>
+                <MenuItem value={2}>2+ Stars</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <FormControl fullWidth size={isMobile ? "small" : "medium"}>
+              <InputLabel>Sort By</InputLabel>
+              <Select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                label="Sort By"
+              >
+                <MenuItem value="rating">Top Rated</MenuItem>
+                <MenuItem value="name">Name</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={() => {
+                setSearchTerm('');
+                setSelectedCuisine('All');
+                setSelectedRating(0);
+                setSortBy('rating');
+              }}
+              sx={{
+                borderColor: '#6C5CE7',
+                color: '#6C5CE7',
+                height: isMobile ? '40px' : '56px',
+                '&:hover': {
+                  borderColor: '#5A4BD1',
+                  bgcolor: 'rgba(108,92,231,0.05)'
+                }
+              }}
+              size={isMobile ? "small" : "medium"}
+            >
+              Clear Filters
+            </Button>
+          </Grid>
+        </Grid>
+      </Paper>
 
-    const [result] = await pool.query(
-      `INSERT INTO menu_items 
-       (restaurant_id, name, description, price, category, is_available) 
-       VALUES (?, ?, ?, ?, ?, 1)`,
-      [restaurant[0].id, name, description, price, category]
-    );
+      {/* Results Count */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          {filteredRestaurants.length} restaurants found
+        </Typography>
+        {user && (
+          <Button component={Link} to="/favorites" size="small" sx={{ color: '#6C5CE7' }}>
+            ❤️ My Favorites
+          </Button>
+        )}
+      </Box>
 
-    res.status(201).json({ 
-      success: true, 
-      message: 'Menu item added successfully',
-      data: { id: result.insertId }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+      {/* Restaurants Grid */}
+      {filteredRestaurants.length === 0 ? (
+        <Box sx={{ textAlign: 'center', py: 8 }}>
+          <RestaurantIcon sx={{ fontSize: 60, color: '#ccc' }} />
+          <Typography variant="h5" sx={{ mt: 2, color: '#666' }}>
+            No restaurants found
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Try adjusting your filters
+          </Typography>
+        </Box>
+      ) : (
+        <Grid container spacing={3}>
+          {filteredRestaurants.map((r) => (
+            <Grid item xs={12} sm={6} md={4} key={r.id}>
+              <Card
+                sx={{
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  position: 'relative',
+                  transition: 'transform 0.3s, box-shadow 0.3s',
+                  '&:hover': {
+                    transform: 'translateY(-8px)',
+                    boxShadow: '0 8px 30px rgba(108,92,231,0.15)'
+                  }
+                }}
+              >
+                {/* Favorite Button */}
+                <Button
+                  onClick={() => handleToggleFavorite(r.id)}
+                  sx={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    minWidth: 'auto',
+                    p: 1,
+                    borderRadius: '50%',
+                    bgcolor: 'rgba(255,255,255,0.8)',
+                    '&:hover': {
+                      bgcolor: 'rgba(255,255,255,0.95)'
+                    },
+                    zIndex: 1
+                  }}
+                >
+                  <Typography sx={{ fontSize: '28px' }}>
+                    {favorites[r.id] ? '❤️' : '🤍'}
+                  </Typography>
+                </Button>
 
-// =============================================
-// START SERVER - WITH SOCKET.IO
-// =============================================
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Yuvanzo Server running on port ${PORT}`);
-  console.log(`📍 http://localhost:${PORT}`);
-  console.log(`📍 Network: http://172.20.10.3:${PORT}`);
-});
+                <CardContent sx={{ flexGrow: 1 }}>
+                  <Typography variant="h5" component="h2" gutterBottom>
+                    {r.name}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    🍽️ {r.cuisine_type}
+                  </Typography>
+                  
+                  {/* Opening Status & Delivery Time */}
+                  <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                    <Chip
+                      label={isRestaurantOpen(r.opening_time, r.closing_time) ? '🟢 Open Now' : '🔴 Closed'}
+                      size="small"
+                      sx={{
+                        bgcolor: isRestaurantOpen(r.opening_time, r.closing_time) ? '#e8f5e9' : '#ffebee',
+                        color: isRestaurantOpen(r.opening_time, r.closing_time) ? '#2e7d32' : '#c62828'
+                      }}
+                    />
+                    {r.delivery_time && (
+                      <Chip
+                        label={`🚚 ${r.delivery_time}`}
+                        size="small"
+                        sx={{ bgcolor: '#e3f2fd', color: '#0d47a1' }}
+                      />
+                    )}
+                  </Box>
 
-// Initialize Socket.io
-initSocket(server);
+                  {/* Rating */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                    <Typography variant="body2" sx={{ color: '#FDCB6E' }}>
+                      {renderStars(r.rating)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                      ({r.rating || 0})
+                    </Typography>
+                  </Box>
+                  
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    📍 {r.address}
+                  </Typography>
+                  
+                  {r.delivery_fee && (
+                    <Chip
+                      label={`Delivery ₹${r.delivery_fee}`}
+                      size="small"
+                      sx={{ mt: 1, bgcolor: '#e8f5e9', color: '#2e7d32' }}
+                    />
+                  )}
+                </CardContent>
+                <CardActions>
+                  <Button
+                    component={Link}
+                    to={`/restaurant/${r.id}`}
+                    fullWidth
+                    variant="contained"
+                    sx={{
+                      bgcolor: '#6C5CE7',
+                      '&:hover': { bgcolor: '#5A4BD1' }
+                    }}
+                  >
+                    View Menu
+                  </Button>
+                </CardActions>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      )}
+    </Container>
+  );
+}
+
+export default HomePage;
