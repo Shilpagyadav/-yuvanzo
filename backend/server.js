@@ -1,8 +1,10 @@
+const { initSocket } = require('./socket');
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const paymentRoutes = require('./routes/payment');
 require('dotenv').config();
 
 const app = express();
@@ -10,6 +12,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+app.use('/api/payment', paymentRoutes);
 
 // Database connection
 let pool;
@@ -321,10 +324,181 @@ app.get('/api/orders', auth, async (req, res) => {
 });
 
 // =============================================
-// START SERVER - ALLOWS NETWORK ACCESS
+// VENDOR ROUTES (ONLY ONCE!)
 // =============================================
-app.listen(PORT, '0.0.0.0', () => {
+
+// Get vendor's orders
+app.get('/api/vendor/orders', auth, async (req, res) => {
+  try {
+    const [restaurant] = await pool.query(
+      'SELECT id FROM restaurants WHERE vendor_id = ?',
+      [req.user.id]
+    );
+    
+    if (restaurant.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You are not a vendor' 
+      });
+    }
+
+    const [orders] = await pool.query(
+      `SELECT o.*, oi.*, u.full_name as customer_name,
+              oi.status as item_status
+       FROM orders o 
+       JOIN order_items oi ON o.id = oi.order_id 
+       JOIN users u ON o.user_id = u.id
+       WHERE oi.restaurant_id = ? 
+       ORDER BY o.created_at DESC`,
+      [restaurant[0].id]
+    );
+    
+    res.json({ success: true, data: orders });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update order item status (vendor)
+app.put('/api/vendor/order/:id/status', auth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const orderItemId = req.params.id;
+
+    const [check] = await pool.query(
+      `SELECT oi.* FROM order_items oi 
+       JOIN restaurants r ON oi.restaurant_id = r.id 
+       WHERE oi.id = ? AND r.vendor_id = ?`,
+      [orderItemId, req.user.id]
+    );
+
+    if (check.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Unauthorized' 
+      });
+    }
+
+    await pool.query(
+      'UPDATE order_items SET status = ? WHERE id = ?',
+      [status, orderItemId]
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Order status updated successfully' 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get vendor's earnings
+app.get('/api/vendor/earnings', auth, async (req, res) => {
+  try {
+    const [restaurant] = await pool.query(
+      'SELECT id FROM restaurants WHERE vendor_id = ?',
+      [req.user.id]
+    );
+
+    if (restaurant.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You are not a vendor' 
+      });
+    }
+
+    const [earnings] = await pool.query(
+      `SELECT 
+        COUNT(*) as total_orders,
+        SUM(oi.total_amount) as total_revenue,
+        AVG(oi.total_amount) as average_order_value
+       FROM order_items oi
+       WHERE oi.restaurant_id = ?`,
+      [restaurant[0].id]
+    );
+
+    res.json({ 
+      success: true, 
+      data: {
+        total_orders: earnings[0].total_orders || 0,
+        total_revenue: earnings[0].total_revenue || 0,
+        average_order_value: earnings[0].average_order_value || 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get vendor's menu
+app.get('/api/vendor/menu', auth, async (req, res) => {
+  try {
+    const [restaurant] = await pool.query(
+      'SELECT id FROM restaurants WHERE vendor_id = ?',
+      [req.user.id]
+    );
+
+    if (restaurant.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You are not a vendor' 
+      });
+    }
+
+    const [menu] = await pool.query(
+      'SELECT * FROM menu_items WHERE restaurant_id = ?',
+      [restaurant[0].id]
+    );
+
+    res.json({ success: true, data: menu });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Add menu item (vendor)
+app.post('/api/vendor/menu', auth, async (req, res) => {
+  try {
+    const { name, description, price, category } = req.body;
+    
+    const [restaurant] = await pool.query(
+      'SELECT id FROM restaurants WHERE vendor_id = ?',
+      [req.user.id]
+    );
+
+    if (restaurant.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You are not a vendor' 
+      });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO menu_items 
+       (restaurant_id, name, description, price, category, is_available) 
+       VALUES (?, ?, ?, ?, ?, 1)`,
+      [restaurant[0].id, name, description, price, category]
+    );
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Menu item added successfully',
+      data: { id: result.insertId }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// =============================================
+// START SERVER - WITH SOCKET.IO
+// =============================================
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Yuvanzo Server running on port ${PORT}`);
   console.log(`📍 http://localhost:${PORT}`);
   console.log(`📍 Network: http://172.20.10.3:${PORT}`);
 });
+
+// Initialize Socket.io
+initSocket(server);
