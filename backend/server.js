@@ -4,7 +4,7 @@ const cors = require('cors');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const paymentRoutes = require('./routes/payment');
+// const paymentRoutes = require('./routes/payment');  // Commented out
 require('dotenv').config();
 
 const app = express();
@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
-app.use('/api/payment', paymentRoutes);  // ✅ MOVED HERE - CORRECT!
+// app.use('/api/payment', paymentRoutes);  // Commented out
 
 // Database connection
 let pool;
@@ -75,10 +75,50 @@ app.get('/api', (req, res) => {
       auth: '/api/auth',
       restaurants: '/api/restaurants',
       cart: '/api/cart',
-      orders: '/api/orders',
-      payment: '/api/payment'  // ✅ Added payment endpoint
+      orders: '/api/orders'
     }
   });
+});
+
+// =============================================
+// RESTAURANTS
+// =============================================
+app.get('/api/restaurants', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT *, opening_time, closing_time, delivery_time FROM restaurants WHERE is_active = true ORDER BY rating DESC'
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/restaurants/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT *, opening_time, closing_time, delivery_time FROM restaurants WHERE id = ? AND is_active = true',
+      [req.params.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Restaurant not found' });
+    }
+    res.json({ success: true, data: rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/restaurants/:id/menu', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT mi.*, r.name as restaurant_name FROM menu_items mi JOIN restaurants r ON mi.restaurant_id = r.id WHERE mi.restaurant_id = ? AND mi.is_available = true',
+      [req.params.id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 // =============================================
@@ -131,30 +171,6 @@ app.get('/api/auth/me', auth, async (req, res) => {
   try {
     const [users] = await pool.query('SELECT id, email, full_name, phone, address, role FROM users WHERE id = ?', [req.user.id]);
     res.json({ success: true, data: users[0] });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// =============================================
-// RESTAURANTS
-// =============================================
-app.get('/api/restaurants', async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT * FROM restaurants WHERE is_active = true ORDER BY rating DESC');
-    res.json({ success: true, data: rows });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.get('/api/restaurants/:id/menu', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT mi.*, r.name as restaurant_name FROM menu_items mi JOIN restaurants r ON mi.restaurant_id = r.id WHERE mi.restaurant_id = ? AND mi.is_available = true',
-      [req.params.id]
-    );
-    res.json({ success: true, data: rows });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
