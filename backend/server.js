@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
-app.use('/api/payment', paymentRoutes);
+app.use('/api/payment', paymentRoutes);  // ✅ MOVED HERE - CORRECT!
 
 // Database connection
 let pool;
@@ -75,7 +75,8 @@ app.get('/api', (req, res) => {
       auth: '/api/auth',
       restaurants: '/api/restaurants',
       cart: '/api/cart',
-      orders: '/api/orders'
+      orders: '/api/orders',
+      payment: '/api/payment'  // ✅ Added payment endpoint
     }
   });
 });
@@ -324,10 +325,9 @@ app.get('/api/orders', auth, async (req, res) => {
 });
 
 // =============================================
-// VENDOR ROUTES (ONLY ONCE!)
+// VENDOR ROUTES
 // =============================================
 
-// Get vendor's orders
 app.get('/api/vendor/orders', auth, async (req, res) => {
   try {
     const [restaurant] = await pool.query(
@@ -359,7 +359,6 @@ app.get('/api/vendor/orders', auth, async (req, res) => {
   }
 });
 
-// Update order item status (vendor)
 app.put('/api/vendor/order/:id/status', auth, async (req, res) => {
   try {
     const { status } = req.body;
@@ -393,7 +392,6 @@ app.put('/api/vendor/order/:id/status', auth, async (req, res) => {
   }
 });
 
-// Get vendor's earnings
 app.get('/api/vendor/earnings', auth, async (req, res) => {
   try {
     const [restaurant] = await pool.query(
@@ -431,7 +429,6 @@ app.get('/api/vendor/earnings', auth, async (req, res) => {
   }
 });
 
-// Get vendor's menu
 app.get('/api/vendor/menu', auth, async (req, res) => {
   try {
     const [restaurant] = await pool.query(
@@ -457,7 +454,6 @@ app.get('/api/vendor/menu', auth, async (req, res) => {
   }
 });
 
-// Add menu item (vendor)
 app.post('/api/vendor/menu', auth, async (req, res) => {
   try {
     const { name, description, price, category } = req.body;
